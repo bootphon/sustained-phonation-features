@@ -1,4 +1,4 @@
-name: pho-features
+name: pho_features
 channels:
   - pykaldi
   - conda-forge
@@ -10,9 +10,11 @@ dependencies:
   - scipy
   - pykaldi-cpu
   - shennong
+  - pip
   - pip:
     - tqdm
     - praat-parselmouth
     - pysndfx
     - pysptk
     - numba
+    - jupyter
