@@ -1,14 +1,11 @@
-from collections import defaultdict
 from pathlib import Path
 from typing import List, Dict, Optional, Tuple
 
 import numpy as np
 import parselmouth
-import pysndfx
 import pysptk
 from numba import jit, float32, int32, prange
 from parselmouth import praat
-from pyannote.core import Segment
 from scipy.stats import entropy
 from scipy.stats import skew, kurtosis
 from shennong.audio import Audio
@@ -16,14 +13,8 @@ from shennong.features.postprocessor.delta import DeltaPostProcessor
 from shennong.features.processor.mfcc import MfccProcessor
 from shennong.features.processor.pitch import PitchProcessor, \
     PitchPostProcessor
-from spontaneous_chat.ast import AbstractAnnotation
-from spontaneous_chat.interviews import TaskAnnotation
 
 from .base import SampleProcessor, AudioSample
-from srmrpy import srmr
-
-from kymatio.numpy import Scattering1D
-
 
 
 class PraatVoiceFeatures(SampleProcessor):
@@ -95,61 +86,6 @@ class PraatHNR(SampleProcessor):
                    len(audio_sample.array), str(e)))
 
 
-class ToVoiceFeaturesTimeSeries(SampleProcessor):
-    """Aggregates along the time axis the computed voice features for
-    each slice of voice into a single time series
-    for each feature"""
-
-    def process(self, sample_data: List[SpeechFeatures]) -> FeaturesTimeSeries:
-        speech_series_dict = dict()
-        annots = [feat.annotation for feat in sample_data]
-        for feat_class, subfeat in sample_data[0].get_feat_keys():
-            feat_name = feat_class + "_" + subfeat
-            feat_series = np.array([
-                speech_feat.features[feat_class][subfeat]
-                for speech_feat in sample_data
-            ])
-            speech_series_dict[feat_name] = feat_series
-        # TODO: figure out type of 'annots' var
-        return FeaturesTimeSeries(speech_series_dict, annot=annots)
-
-
-class ToSingleFeatureTimeSeries(SampleProcessor):
-    def process(self, sample_data: List[SingleSpeechFeature]) -> np.ndarray:
-        tseries = np.array([feat.value for feat in sample_data])
-
-        return tseries
-
-
-class SpeechFeaturesStats(SampleProcessor):
-    """Computes, for each feature's time series, the min, max, var and range
-    of that time series"""
-    INPUT_TYPES = [FeaturesTimeSeries]
-    OUTPUT_TYPE = dict
-
-    def process(self, sample_data: FeaturesTimeSeries) -> dict:
-        feat_stats = {}
-        for feat_name, feat_series in sample_data.features_series.items():
-            no_nan_series: np.ndarray = feat_series[~np.isnan(feat_series)]
-            if no_nan_series.size > 0:
-                feat_stats[feat_name] = {
-                    "var": no_nan_series.var(),
-                    "min": no_nan_series.min(),
-                    "max": no_nan_series.max(),
-                    "mean": no_nan_series.mean(),
-                    "range": no_nan_series.max() - no_nan_series.min()
-                }
-            else:
-                feat_stats[feat_name] = {
-                    "var": None,
-                    "min": None,
-                    "max": None,
-                    "mean": None,
-                    "range": None
-                }
-        return feat_stats
-
-
 class FundamentalFrequency(SampleProcessor):
     """Computes the f0 array for a sound file"""
 
@@ -175,13 +111,13 @@ class FundamentalFrequency(SampleProcessor):
         self.min_freq = min_freq
         self.max_freq = max_freq
 
-    def process(self, sample_data: AudioData) -> np.ndarray:
+    def process(self, sample_data: AudioSample) -> np.ndarray:
         # TODO : check homogeneity of the 3 different methods
         # converting the hop size to frame numbers
         frames_hopsize = int(self.hop_size / 1000 * sample_data.rate)
         pitch_values = None
         if self.method == "praat":
-            snd = parselmouth.Sound(sample_data.array, sample_data.rate)
+            snd = parselmouth.Sound(sample_data.data, sample_data.rate)
             pitch_values = snd.to_pitch(
                 time_step=self.hop_size / 1000,
                 pitch_floor=float(self.min_freq),
@@ -190,7 +126,7 @@ class FundamentalFrequency(SampleProcessor):
             pitch_values[pitch_values == 0] = np.nan
         elif self.method == "rapt":
             pitch_values = pysptk.rapt(
-                sample_data.array.astype(np.float32),
+                sample_data.data.astype(np.float32),
                 fs=sample_data.rate,
                 hopsize=frames_hopsize,
                 min=self.min_freq,
@@ -200,7 +136,7 @@ class FundamentalFrequency(SampleProcessor):
             pitch_values[pitch_values == 0] = np.nan
         elif self.method == "swipe":
             pitch_values = pysptk.swipe(
-                sample_data.array.astype(np.float64),
+                sample_data.data.astype(np.float64),
                 fs=sample_data.rate,
                 hopsize=frames_hopsize,
                 min=self.min_freq,
@@ -217,7 +153,7 @@ class FundamentalFrequency(SampleProcessor):
                 'max_f0': self.max_freq
             }
             pitch_processor = PitchProcessor(**pitch_options)
-            audio_data = Audio(sample_data.array, sample_data.rate)
+            audio_data = Audio(sample_data.data, sample_data.rate)
             pitch_values = pitch_processor.process(audio_data)
             pitch_values = pitch_values.data[:, 1]
         return pitch_values
@@ -244,9 +180,9 @@ class AdvancedFundamentalFrequency(SampleProcessor):
         self.min_freq = min_freq
         self.max_freq = max_freq
 
-    def process(self, sample_data: AnnotatedAudioData) -> FeaturesTimeSeries:
+    def process(self, sample: AudioSample) -> Dict:
         pitch_options = {
-            'sample_rate': sample_data.rate,
+            'sample_rate': sample.rate,
             'frame_shift': 0.01,
             'frame_length': 0.025,
             'min_f0': self.min_freq,
@@ -254,7 +190,7 @@ class AdvancedFundamentalFrequency(SampleProcessor):
         }
         pitch_processor = PitchProcessor(**pitch_options)
         post_pitch_processor = PitchPostProcessor()
-        audio_data = Audio(sample_data.array, sample_data.rate)
+        audio_data = Audio(sample.data, sample.rate)
         pitch_values = pitch_processor.process(audio_data)
         post_pitch_values = post_pitch_processor.process(pitch_values)
         pov = np.abs(post_pitch_values.data[:, 0])
@@ -266,7 +202,7 @@ class AdvancedFundamentalFrequency(SampleProcessor):
             "pov": pov,
             "pitch_pov_prod": np.prod([pitch_values.data[:, 1], pov], axis=0)
         }
-        return FeaturesTimeSeries(features_dict, sample_data.annotation)
+        return features_dict
 
 
 class MFCCsMeanOfVariances(SampleProcessor):
@@ -304,7 +240,7 @@ class MFCCsMeanOfVariances(SampleProcessor):
         self.delta = delta
         self.delta_delta = delta_delta
 
-    def process(self, sample_data: AnnotatedAudioData) -> FeaturesTimeSeries:
+    def process(self, sample: AudioSample) -> Dict:
         mfcc_options = {
             'window_type': self.window_type,
             'low_freq': self.low_freq,
@@ -342,174 +278,98 @@ class MFCCsMeanOfVariances(SampleProcessor):
                     np.std(delta_values.data[:, nmfcc:2 * nmfcc].data,
                            axis=0)),
             }
-            return FeaturesTimeSeries(features_dict, sample_data.annotation)
+            return features_dict
 
         else:
             features_dict = {
                 "mfcc": np.mean(np.std(mfcc_values.data, axis=0)),
             }
-            return FeaturesTimeSeries(features_dict, sample_data.annotation)
+            return features_dict
 
 
 class VocalTremorFeatures(SampleProcessor):
     PRAAT_SCRIPT_PATH = Path(__file__).parent \
                         / Path("data/tremor2.07/tremor.praat")
 
-    def process(self, sample_data: List[AnnotatedAudioData]) \
-            -> List[SingleSpeechFeature]:
-        samples_features = []
-        for audio_sample in sample_data:
-            try:
-                sound = parselmouth.Sound(audio_sample.array,
-                                          audio_sample.rate)
-                tremor_outputs = praat.run_file(
-                    sound,
-                    str(self.PRAAT_SCRIPT_PATH),
-                    "Analyis mode",
-                    0.015,
-                    60,
-                    350,
-                    0.03,
-                    0.3,
-                    0.01,
-                    0.35,
-                    0.14,
-                    "Envelope [To AmplitudeTier (period)]",
-                    1.5,
-                    15,
-                    0.01,
-                    0.15,
-                    0.01,
-                    0.01,
-                    capture_output=True)
-                tremor_features = {}
-                for el in tremor_outputs[1].split('\n'):
-                    if len(el.split(':')) > 1:
-                        try:
-                            tremor_features[el.split(':')[0]] = float(
-                                el.split(':')[1].split()[0])
-                        except Exception:
-                            tremor_features[el.split(':')[0]] = None
-                samples_features.append(
-                    SingleSpeechFeature(audio_sample.annotation,
-                                        "tremor_features", tremor_features))
+    def process(self, sample: AudioSample) -> Dict:
+        try:
+            sound = parselmouth.Sound(sample.data,
+                                      sample.rate)
+            tremor_outputs = praat.run_file(
+                sound,
+                str(self.PRAAT_SCRIPT_PATH),
+                "Analyis mode",
+                0.015,
+                60,
+                350,
+                0.03,
+                0.3,
+                0.01,
+                0.35,
+                0.14,
+                "Envelope [To AmplitudeTier (period)]",
+                1.5,
+                15,
+                0.01,
+                0.15,
+                0.01,
+                0.01,
+                capture_output=True)
+            tremor_features = {}
+            for el in tremor_outputs[1].split('\n'):
+                if len(el.split(':')) > 1:
+                    try:
+                        tremor_features[el.split(':')[0]] = float(
+                            el.split(':')[1].split()[0])
+                    except Exception:
+                        tremor_features[el.split(':')[0]] = None
+            return tremor_features
 
-            except parselmouth.PraatError as e:
-                print("Sample %s, annotations %s (%i samples): error %s)" %
-                      (self.current_sample.id,
-                       audio_sample.annotation.to_phonemes(),
-                       len(audio_sample.array), str(e)))
-        return samples_features
+        except parselmouth.PraatError as e:
+            print("Sample %s, annotations %s (%i samples): error %s)" %
+                  (self.current_sample.id,
+                   audio_sample.annotation.to_phonemes(),
+                   len(audio_sample.array), str(e)))
 
 
 class AperiodicityFeatures(SampleProcessor):
-    def process(self, sample_data: List[AnnotatedAudioData]
-                ) -> List[SingleSpeechFeature]:
-        samples_features = []
-        for audio_sample in sample_data:
-            try:
-                sound = parselmouth.Sound(audio_sample.array,
-                                          audio_sample.rate)
-                pitch = sound.to_pitch()
-                pulses = parselmouth.praat.call([sound, pitch],
-                                                "To PointProcess (cc)")
-                voice_report_str = parselmouth.praat.call(
-                    [sound, pitch, pulses], "Voice report", 0.0, 0.0, 75, 600,
-                    1.3, 1.6, 0.03, 0.45)
-
-                aperiodicity_features = {}
-                for el in voice_report_str.split('\n'):
-                    if len(el.split(':')) > 1:
-                        if 'Fraction of locally unvoiced frames' in el:
-                            aperiodicity_features[
-                                'Fraction of locally unvoiced frames'] = float(
-                                    el.split(':')[1].replace("%",
-                                                             "").split('(')[0])
-                        if 'Number of voice breaks' in el:
-                            aperiodicity_features[
-                                'Number of voice breaks'] = float(
-                                    el.split(':')[1])
-                        if 'Degree of voice breaks' in el:
-                            aperiodicity_features[
-                                'Degree of voice breaks'] = float(
-                                    el.split(':')[1].replace("%",
-                                                             "").split('(')[0])
-                samples_features.append(
-                    SingleSpeechFeature(audio_sample.annotation,
-                                        "aperiodicity_features",
-                                        aperiodicity_features))
-
-            except parselmouth.PraatError as e:
-                print("Sample %s, annotations %s (%i samples): error %s)" %
-                      (self.current_sample.id,
-                       audio_sample.annotation.to_phonemes(),
-                       len(audio_sample.array), str(e)))
-        return samples_features
-
-
-class MaximumPhonationUntilVoiceBreak(SampleProcessor):
-
-    @staticmethod
-    def compute_NVB(snd):
-        pitch = snd.to_pitch()
-        pulses = parselmouth.praat.call([snd, pitch], "To PointProcess (cc)")
-        voice_report_str = parselmouth.praat.call([snd, pitch, pulses],
-                                                  "Voice report", 0.0, 0.0, 75,
-                                                  600, 1.3, 1.6, 0.03, 0.45)
-        for el in voice_report_str.split('\n'):
-            if len(el.split(':')) > 1:
-                if 'Number of voice breaks' in el:
-                    return float(el.split(':')[1])
-
-    @classmethod
-    def compute_MPTVB(cls, snd):
-        if cls.compute_NVB(snd) == 0:
-            return snd.duration
-        else:
-            candidates = []
-            start_points = list(np.arange(0.30, snd.duration, 0.25))
-            for start_point in start_points:
-                snd_part = snd.extract_part(
-                    from_time=start_point - 0.05, to_time=start_point + 0.5)
-                if cls.compute_NVB(snd_part) > 0:
-                    return start_point
-
-    def process(self, sample_data: AnnotatedAudioData) -> float:
+    def process(self, sample_data: AudioSample) -> Dict:
         try:
-            sound = parselmouth.Sound(sample_data.array, sample_data.rate)
-            return self.compute_MPTVB(sound)
+            sound = parselmouth.Sound(audio_sample.array,
+                                      audio_sample.rate)
+            pitch = sound.to_pitch()
+            pulses = parselmouth.praat.call([sound, pitch],
+                                            "To PointProcess (cc)")
+            voice_report_str = parselmouth.praat.call(
+                [sound, pitch, pulses], "Voice report", 0.0, 0.0, 75, 600,
+                1.3, 1.6, 0.03, 0.45)
+
+            aperiodicity_features = {}
+            for el in voice_report_str.split('\n'):
+                if len(el.split(':')) > 1:
+                    if 'Fraction of locally unvoiced frames' in el:
+                        aperiodicity_features[
+                            'Fraction of locally unvoiced frames'] = float(
+                                el.split(':')[1].replace("%",
+                                                         "").split('(')[0])
+                    if 'Number of voice breaks' in el:
+                        aperiodicity_features[
+                            'Number of voice breaks'] = float(
+                                el.split(':')[1])
+                    if 'Degree of voice breaks' in el:
+                        aperiodicity_features[
+                            'Degree of voice breaks'] = float(
+                                el.split(':')[1].replace("%",
+                                                         "").split('(')[0])
+            return aperiodicity_features
 
         except parselmouth.PraatError as e:
-            print(
-                "Sample %s, annotations %s (%i samples): error %s)" %
-                (self.current_sample.id, sample_data.annotation.to_phonemes(),
-                 len(sample_data.array), str(e)))
+            print("Sample %s, annotations %s (%i samples): error %s)" %
+                  (self.current_sample.id,
+                   audio_sample.annotation.to_phonemes(),
+                   len(audio_sample.array), str(e)))
 
 
-class NonIntrusiveSpeechIntelligibility(SampleProcessor):
-    def process(self, sample_data: AnnotatedAudioData) -> Dict[str, float]:
-        speech_intelligibility, _ = srmr(
-            sample_data.array,
-            sample_data.rate,
-            n_cochlear_filters=23,
-            low_freq=125,
-            min_cf=4,
-            max_cf=128,
-            fast=True,
-            norm=False)
-        speech_intelligibility_normed, _ = srmr(
-            sample_data.array,
-            sample_data.rate,
-            n_cochlear_filters=23,
-            low_freq=125,
-            min_cf=4,
-            max_cf=128,
-            fast=True,
-            norm=True)
-        return {
-            'speech_intelligibility': speech_intelligibility,
-            'speech_intelligibility_normed': speech_intelligibility_normed
-        }
 
 
 class HarmonicPartialsFeatures(SampleProcessor):
@@ -699,83 +559,6 @@ class DFA(SampleProcessor):
         coeff = np.polyfit(np.log10(scales), np.log10(fluct), 1)
         normalized_dfa = 1 / (1 + np.exp(-coeff[0]))
         return normalized_dfa
-
-
-class ScatteringTransform(SampleProcessor):
-    """
-    Computes, for each annotated audio sample, the scattering transform,
-    Will output the different order separately
-    """
-
-    def __init__(self, J=6, Q=16):
-        """
-
-        :param J: The averaging scale is specified as a power of two, J
-        :param Q: Number of wavelets per octave
-        """
-        # T = x.shape[-1]
-
-        super().__init__(J=J, Q=Q)
-
-        self.J = J
-        self.Q = Q
-
-    def process(self, sample_data: AnnotatedAudioData) -> FeaturesTimeSeries:
-        T = np.max(sample_data.array.shape)
-        audio_data = sample_data.array
-        audio_data = audio_data / np.max(np.abs(audio_data))
-        scattering = Scattering1D(self.J, T, self.Q)
-        Sx = scattering(audio_data)
-        meta = scattering.meta()
-        order0 = np.where(meta['order'] == 0)
-        order1 = np.where(meta['order'] == 1)
-        order2 = np.where(meta['order'] == 2)
-        features_dict = {
-            "zeroth_order": Sx[order0][0],
-            "first_order": Sx[order1],
-            "second_order": Sx[order2]
-        }
-        return FeaturesTimeSeries(features_dict, sample_data.annotation)
-
-
-class ReSliceFeatureTimeSeries(SampleProcessor):
-    """Slices an annotation's feature's time series (typically from a word) into
-    smalled sub-time series using a that annotation's phonemic form."""
-
-    def process(self, sample_data: List[FeaturesTimeSeries]
-                ) -> List[FeaturesTimeSeries]:
-        subslices: List[FeaturesTimeSeries] = []
-        for slice_feats in sample_data:
-            for pho in slice_feats.annot.aligned_phonetic_form:
-                subslice_feats = {}
-                for feat_name, feat_ts in slice_feats.features_series.items():
-                    # computing the number of feature data points per seconds for each annotation
-                    feat_sample_rate = len(
-                        feat_ts) / slice_feats.annot.segment.duration
-
-                    subslice_len = round(
-                        (feat_sample_rate * pho.segment.duration()))
-                    # length (in secs) between start of annot and start of phoneme
-                    pho_offset = pho.segment.start - slice_feats.annot.segment.start
-                    assert pho_offset > 0  #  sanity check
-                    subslice_start = round(feat_sample_rate * pho_offset)
-
-                    subslice_feats[feat_name] = feat_ts[
-                        subslice_start:subslice_start + subslice_len]
-                subslices.append(FeaturesTimeSeries(subslice_feats, pho))
-        return subslices
-
-
-class ConcatenateFeaturesTimesSeriesList(SampleProcessor):
-    def process(self,
-                sample_data: List[FeaturesTimeSeries]) -> FeaturesTimeSeries:
-        aggregated_features = dict()
-        for feat_name in sample_data[0].features_series.keys():
-            aggregated_features[feat_name] = np.concatenate([
-                slice_data.features_series[feat_name]
-                for slice_data in sample_data
-            ])
-        return FeaturesTimeSeries(aggregated_features)
 
 
 class TimeSeriesStatistics(SampleProcessor):
