@@ -195,9 +195,9 @@ class AdvancedFundamentalFrequency(SampleProcessor):
         return features_dict
 
 
-class MFCCsMeanOfVariances(SampleProcessor):
+class MFCCsMeanOfStd(SampleProcessor):
     """
-    Computes, for each annotated audio sample, the mean of variances for the 12
+    Computes, for each annotated audio sample, the mean of standard deviations for the 12
     first coefficients of the MFCCs and their deltas
     """
 
@@ -232,7 +232,7 @@ class MFCCsMeanOfVariances(SampleProcessor):
             'use_energy': self.use_energy
         }
         mfcc_processor = MfccProcessor(**mfcc_options)
-        audio_data = Audio(sample_data.array, sample_data.rate)
+        audio_data = Audio(sample.data, sample.rate)
         mfcc_values = mfcc_processor.process(audio_data)
         if self.delta and self.delta_delta:
             delta_processor = DeltaPostProcessor(order=2)
@@ -318,8 +318,8 @@ class VocalTremorFeatures(SampleProcessor):
 class AperiodicityFeatures(SampleProcessor):
     def process(self, sample_data: AudioSample) -> Dict:
         try:
-            sound = parselmouth.Sound(audio_sample.array,
-                                      audio_sample.rate)
+            sound = parselmouth.Sound(sample_data.data,
+                                      sample_data.rate)
             pitch = sound.to_pitch()
             pulses = parselmouth.praat.call([sound, pitch],
                                             "To PointProcess (cc)")
@@ -348,8 +348,8 @@ class AperiodicityFeatures(SampleProcessor):
 
         except parselmouth.PraatError as e:
             print("Sample %s, (%i samples): error %s)" %
-                  (sample.name,
-                   len(audio_sample.array), str(e)))
+                  (sample_data.name,
+                   len(sample_data.data), str(e)))
 
 
 
