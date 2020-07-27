@@ -88,7 +88,7 @@ class PraatHNR(SampleProcessor):
 class FundamentalFrequency(SampleProcessor):
     """Computes the f0 array for a sound file"""
 
-    def __init__(self, method="praat", hop_size=5, min_freq=75, max_freq=300):
+    def __init__(self, method="shennong", hop_size=5, min_freq=75, max_freq=300):
         """
 
         :param method: The engine used for the F0 computation
@@ -96,8 +96,6 @@ class FundamentalFrequency(SampleProcessor):
         :param min_freq: The minimum boundary for f0 values
         :param max_freq: The maximum boundary for f0 values
         """
-        super().__init__()
-
         if method not in ("praat", "rapt", "swipe", "shennong"):
             raise ValueError(
                 "F0 method has to be either praat, rapt, swipe or shennong")
@@ -274,7 +272,7 @@ class MFCCsMeanOfVariances(SampleProcessor):
 
 
 class VocalTremorFeatures(SampleProcessor):
-    PRAAT_SCRIPT_PATH = Path(__file__).parent \
+    PRAAT_SCRIPT_PATH = Path(__file__).absolute().parent \
                         / Path("data/tremor2.07/tremor.praat")
 
     def process(self, sample: AudioSample) -> Dict:
@@ -448,10 +446,10 @@ class RPDE(SampleProcessor):
     def process(self, sample_data: AudioSample) -> float:
         # converting the sound array to the right format
         # (RPDE expects the array to be floats in [-1,1]
-        if sample_data.array.dtype == np.int16:
-            data = (sample_data.array / (2**16)).astype(np.float32)
+        if sample_data.data.dtype == np.int16:
+            data = (sample_data.data / (2**16)).astype(np.float32)
         else:
-            data = sample_data.array.astype(np.float32)
+            data = sample_data.data.astype(np.float32)
 
         #  building the time series, and computing the recurrence histogram
         embedded_ts = self.embed_time_series(data, self.dim, self.tau)
@@ -503,7 +501,7 @@ class DFA(SampleProcessor):
         return rms
 
     def process(self, sample_data: AudioSample) -> float:
-        data = sample_data.array
+        data = sample_data.data
         # cumulative sum of data with substracted offset
         y = np.cumsum(data - np.mean(data))
         scale_exponents = np.arange(self.scale_bound[0], self.scale_bound[1],
@@ -531,3 +529,44 @@ class TimeSeriesStatistics(SampleProcessor):
             "skewness": skew(sample_data),
             "kurtosis": kurtosis(sample_data)
         }
+    
+class MPT(SampleProcessor):
+    def process(self, sample_data: AudioSample) -> float:
+        return len(sample_data.data)/sample_data.rate
+    
+    
+class MaximumPhonationUntilVoiceBreak(SampleProcessor):
+    @staticmethod
+    def compute_NVB(snd):
+        pitch = snd.to_pitch()
+        pulses = parselmouth.praat.call([snd, pitch], "To PointProcess (cc)")
+        voice_report_str = parselmouth.praat.call([snd, pitch, pulses],
+                                                  "Voice report", 0.0, 0.0, 75,
+                                                  600, 1.3, 1.6, 0.03, 0.45)
+        for el in voice_report_str.split('\n'):
+            if len(el.split(':')) > 1:
+                if 'Number of voice breaks' in el:
+                    return float(el.split(':')[1])
+
+    @classmethod
+    def compute_MPTVB(cls, snd):
+        if cls.compute_NVB(snd) == 0:
+            return snd.duration
+        else:
+            start_points = list(np.arange(0.30, snd.duration, 0.25))
+            for start_point in start_points:
+                snd_part = snd.extract_part(
+                    from_time=start_point - 0.05, to_time=start_point + 0.5)
+                if cls.compute_NVB(snd_part) > 0:
+                    return start_point
+
+    def process(self, sample_data: AudioSample) -> float:
+        try:
+            sound = parselmouth.Sound(sample_data.data, sample_data.rate)
+            return self.compute_MPTVB(sound)
+
+        except parselmouth.PraatError as e:
+            print("Sample %s, (%i samples): error %s)" %
+                  (self.current_sample.id,
+                   len(sample_data.data), str(e)))
+
