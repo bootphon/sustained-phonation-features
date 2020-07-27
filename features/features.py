@@ -64,13 +64,13 @@ class PraatVoiceFeatures(SampleProcessor):
             return features
 
         except parselmouth.PraatError as e:
-            print("Sample %s, phoneme %s (%i samples): error %s)" %
-                  (self.current_sample.id, audio_sample.annotation.pho,
+            print("Sample %s, (%i samples): error %s)" %
+                  (sample.name,
                    len(audio_sample.array), str(e)))
 
 
 class PraatHNR(SampleProcessor):
-    def process(self, sample: AudioSample) -> List[SingleSpeechFeature]:
+    def process(self, sample: AudioSample) -> List[float]:
         try:
             sound = parselmouth.Sound(sample.data,
                                       sample.rate)
@@ -80,10 +80,9 @@ class PraatHNR(SampleProcessor):
             return hnr
 
         except parselmouth.PraatError as e:
-            print("Sample %s, annotations %s (%i samples): error %s)" %
-                  (self.current_sample.id,
-                   audio_sample.annotation.to_phonemes(),
-                   len(audio_sample.array), str(e)))
+            print("Sample %s, (%i samples): error %s)" %
+                  (sample.name,
+                   len(sample.data), str(e)))
 
 
 class FundamentalFrequency(SampleProcessor):
@@ -97,11 +96,7 @@ class FundamentalFrequency(SampleProcessor):
         :param min_freq: The minimum boundary for f0 values
         :param max_freq: The maximum boundary for f0 values
         """
-        super().__init__(
-            method=method,
-            hop_size=hop_size,
-            min_freq=min_freq,
-            max_freq=max_freq)
+        super().__init__()
 
         if method not in ("praat", "rapt", "swipe", "shennong"):
             raise ValueError(
@@ -173,9 +168,6 @@ class AdvancedFundamentalFrequency(SampleProcessor):
         :param min_freq: The minimum boundary for f0 values
         :param max_freq: The maximum boundary for f0 values
         """
-        super().__init__(
-            hop_size=hop_size, min_freq=min_freq, max_freq=max_freq)
-
         self.hop_size = hop_size
         self.min_freq = min_freq
         self.max_freq = max_freq
@@ -225,13 +217,7 @@ class MFCCsMeanOfVariances(SampleProcessor):
         :param high_freq: The maximum boundary for f0 values
         :param use_energy: Use Energy or C0 for MFCC computation
         """
-        super().__init__(
-            window_type=window_type,
-            low_freq=low_freq,
-            high_freq=high_freq,
-            use_energy=use_energy,
-            delta=delta,
-            delta_delta=delta_delta)
+        super().__init__()
 
         self.window_type = window_type
         self.low_freq = low_freq
@@ -264,7 +250,7 @@ class MFCCsMeanOfVariances(SampleProcessor):
                 "delta_delta_mfcc":
                 np.mean(np.std(delta_values.data[:, 2 * nmfcc:].data, axis=0)),
             }
-            return FeaturesTimeSeries(features_dict, sample_data.annotation)
+            return features_dict
 
         elif self.delta and not self.delta_delta:
             delta_processor = DeltaPostProcessor(order=1)
@@ -326,10 +312,9 @@ class VocalTremorFeatures(SampleProcessor):
             return tremor_features
 
         except parselmouth.PraatError as e:
-            print("Sample %s, annotations %s (%i samples): error %s)" %
-                  (self.current_sample.id,
-                   audio_sample.annotation.to_phonemes(),
-                   len(audio_sample.array), str(e)))
+            print("Sample %s, (%i samples): error %s)" %
+                  (sample.name,
+                   len(sample.array), str(e)))
 
 
 class AperiodicityFeatures(SampleProcessor):
@@ -364,36 +349,10 @@ class AperiodicityFeatures(SampleProcessor):
             return aperiodicity_features
 
         except parselmouth.PraatError as e:
-            print("Sample %s, annotations %s (%i samples): error %s)" %
-                  (self.current_sample.id,
-                   audio_sample.annotation.to_phonemes(),
+            print("Sample %s, (%i samples): error %s)" %
+                  (sample.name,
                    len(audio_sample.array), str(e)))
 
-
-
-
-class HarmonicPartialsFeatures(SampleProcessor):
-    """Computes, for each annotated audio sample, the F0, F1, F2 and F3"""
-
-    def process(self, sample_data: List[AnnotatedAudioData]
-                ) -> List[FeaturesTimeSeries]:
-        annots_formants = []
-        for audio_sample in sample_data:
-            snd = parselmouth.Sound(audio_sample.array, audio_sample.rate)
-            formants = snd.to_formant_burg()
-            # first computing f0 using praat's implem
-            partials_dict = {"f0": snd.to_pitch().selected_array["frequency"]}
-            # then the formants
-            for formant_idx in range(1, 4):
-                partials_dict["f%i" % formant_idx] = parselmouth.praat.call(
-                    formants, "To Matrix", formant_idx).values.flatten()
-
-            # setting 0 values to NaN
-            for key, series in partials_dict.items():
-                series[series == 0.0] = np.nan
-            annots_formants.append(
-                FeaturesTimeSeries(partials_dict, audio_sample.annotation))
-        return annots_formants
 
 
 class RPDE(SampleProcessor):
@@ -402,7 +361,7 @@ class RPDE(SampleProcessor):
                  tau: int,
                  epsilon: float,
                  tmax: Optional[float] = None):
-        super().__init__(dim=dim, tau=tau, epsilon=epsilon, tmax=tmax)
+        super().__init__()
         self.epsilon, self.tau, self.dim = epsilon, tau, dim
         self.tmax = tmax
 
@@ -486,7 +445,7 @@ class RPDE(SampleProcessor):
         embed_mask = embed_mask + tau_offsets
         return data[embed_mask]
 
-    def process(self, sample_data: AnnotatedAudioData) -> float:
+    def process(self, sample_data: AudioSample) -> float:
         # converting the sound array to the right format
         # (RPDE expects the array to be floats in [-1,1]
         if sample_data.array.dtype == np.int16:
@@ -524,8 +483,7 @@ class DFA(SampleProcessor):
 
     def __init__(self, scale_boundaries: Tuple[float, float],
                  scale_density: float):
-        super().__init__(scale_boundaries=scale_boundaries,
-                         scale_density=scale_density)
+        super().__init__()
         self.scale_bound = scale_boundaries
         self.scale_density = scale_density
 
@@ -544,7 +502,7 @@ class DFA(SampleProcessor):
             rms[e] = np.sqrt(np.mean((xcut - xfit)**2))
         return rms
 
-    def process(self, sample_data: AudioData) -> float:
+    def process(self, sample_data: AudioSample) -> float:
         data = sample_data.array
         # cumulative sum of data with substracted offset
         y = np.cumsum(data - np.mean(data))
