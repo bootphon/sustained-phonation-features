@@ -16,6 +16,9 @@ from shennong.features.processor.pitch import PitchProcessor, \
 
 from .base import SampleProcessor, AudioSample
 
+from soundsig.sound import BioSound
+from soundsig.sound import WavFile
+
 
 class PraatVoiceFeatures(SampleProcessor):
     """Computes the various shimmer/jitter features using the parselmouth
@@ -69,6 +72,61 @@ class PraatVoiceFeatures(SampleProcessor):
                    len(audio_sample.array), str(e)))
 
 
+            
+            
+
+class ModulationPowerSpectrumAnalysis(SampleProcessor):
+    """
+    Computes, for each annotated audio sample, the modulation power spectrum,
+    and diverse statistics associated
+    """
+
+    def __init__(self,
+                 max_abs_temporal_modulation=200,
+                 min_spectral_modulation=0,
+                 max_spectral_modulation=9.5):
+        """
+        """
+
+        super().__init__()
+        self.max_abs_temporal_modulation = max_abs_temporal_modulation
+        self.min_spectral_modulation = min_spectral_modulation
+
+    def filter_mps(self, mps: np.ndarray, wf: np.ndarray, wt: np.ndarray):
+        # making an array with data divided in windows
+        frequency_modulations_clip = wf[wf >= self.min_spectral_modulation & wf <= self.max_spectral_modulation]
+        temporal_modulations_clip = wt[
+            (wt >= -self.max_abs_temporal_modulation)
+            & (wt <= self.max_abs_temporal_modulation)]
+        temporal_modulations_indexes = (
+            wt >= -self.max_abs_temporal_modulation) & (
+                wt <= self.max_abs_temporal_modulation)
+        frequency_modulations_indexes = wf >= \
+            self.min_spectral_modulation & wf <= self.max_spectral_modulation
+        mps = mps[frequency_modulations_indexes, :]
+        mps = mps[:, temporal_modulations_indexes]
+        mps_powTensor = np.where(mps == 0, np.finfo(float).eps, mps)
+        return mps, frequency_modulations_clip, temporal_modulations_clip
+
+    def process(self, sample_data: AudioSample) -> np.ndarray:
+        maxAmp = np.abs(sample_data.data.astype(float)).max()
+        myBioSound = BioSound(
+            soundWave=sample_data.data.astype(float) / maxAmp,
+            fs=float(sample_data.rate),
+            emitter='empty',
+            calltype='empty')
+        # spec_sample_rate: 1000 == 1frame per ms
+        myBioSound.spectroCalc(
+            spec_sample_rate=1000,
+            freq_spacing=50,
+            min_freq=0,
+            max_freq=sample_data.rate / 2)
+        myBioSound.mpsCalc(window=0.1, Norm=True)
+
+        filtered_mps,_,_ = self.filter_mps(mps = myBioSound.mps, wf = myBioSound.wf, wt = myBioSound.wt)
+        return filtered_mps
+
+    
 class PraatHNR(SampleProcessor):
     def process(self, sample: AudioSample) -> List[float]:
         try:
@@ -229,7 +287,8 @@ class MFCCsMeanOfStd(SampleProcessor):
             'window_type': self.window_type,
             'low_freq': self.low_freq,
             'high_freq': self.high_freq,
-            'use_energy': self.use_energy
+            'use_energy': self.use_energy,
+            'sample_rate':sample.rate,
         }
         mfcc_processor = MfccProcessor(**mfcc_options)
         audio_data = Audio(sample.data, sample.rate)
