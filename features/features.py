@@ -21,6 +21,7 @@ from soundsig.sound import WavFile
 
 
 class PraatVoiceFeatures(SampleProcessor):
+    
     """Computes the various shimmer/jitter features using the parselmouth
     binding librairy. All the features are accessed through the API's
     `parselmouth.praat.call` function and some very specific parameters"""
@@ -47,7 +48,7 @@ class PraatVoiceFeatures(SampleProcessor):
         "apq11": ("Get shimmer (apq11)", (0, 0, 0.0001, 0.02, 1.3, 1.6)),
         "dda": ("Get shimmer (dda)", (0, 0, 0.0001, 0.02, 1.3, 1.6))
     }
-
+    INPUT_SAMPLING_RATE = 16000
     def process(self, sample: AudioSample) -> Dict:
         try:
             sound = parselmouth.Sound(sample.data,
@@ -80,29 +81,31 @@ class ModulationPowerSpectrumAnalysis(SampleProcessor):
     Computes, for each annotated audio sample, the modulation power spectrum,
     and diverse statistics associated
     """
+    INPUT_SAMPLING_RATE = 16000
 
     def __init__(self,
                  max_abs_temporal_modulation=200,
                  min_spectral_modulation=0,
-                 max_spectral_modulation=9.5):
+                 max_spectral_modulation=10*10**(-3)):
         """
         """
 
         super().__init__()
         self.max_abs_temporal_modulation = max_abs_temporal_modulation
         self.min_spectral_modulation = min_spectral_modulation
+        self.max_spectral_modulation = max_spectral_modulation
 
     def filter_mps(self, mps: np.ndarray, wf: np.ndarray, wt: np.ndarray):
         # making an array with data divided in windows
-        frequency_modulations_clip = wf[wf >= self.min_spectral_modulation & wf <= self.max_spectral_modulation]
+        frequency_modulations_clip = wf[(wf >= self.min_spectral_modulation) & (wf <= self.max_spectral_modulation)]
         temporal_modulations_clip = wt[
             (wt >= -self.max_abs_temporal_modulation)
             & (wt <= self.max_abs_temporal_modulation)]
         temporal_modulations_indexes = (
             wt >= -self.max_abs_temporal_modulation) & (
                 wt <= self.max_abs_temporal_modulation)
-        frequency_modulations_indexes = wf >= \
-            self.min_spectral_modulation & wf <= self.max_spectral_modulation
+        frequency_modulations_indexes = (wf >= \
+            self.min_spectral_modulation) & (wf <= self.max_spectral_modulation)
         mps = mps[frequency_modulations_indexes, :]
         mps = mps[:, temporal_modulations_indexes]
         mps_powTensor = np.where(mps == 0, np.finfo(float).eps, mps)
@@ -123,11 +126,12 @@ class ModulationPowerSpectrumAnalysis(SampleProcessor):
             max_freq=sample_data.rate / 2)
         myBioSound.mpsCalc(window=0.1, Norm=True)
 
-        filtered_mps,_,_ = self.filter_mps(mps = myBioSound.mps, wf = myBioSound.wf, wt = myBioSound.wt)
-        return filtered_mps
+        filtered_mps, mps_wf,mps_wt = self.filter_mps(mps = myBioSound.mps, wf = myBioSound.wf, wt = myBioSound.wt)
+        return {'mps': filtered_mps, 'mps_wf': mps_wf,'mps_wt': mps_wt}
 
     
 class PraatHNR(SampleProcessor):
+    INPUT_SAMPLING_RATE = 16000
     def process(self, sample: AudioSample) -> List[float]:
         try:
             sound = parselmouth.Sound(sample.data,
@@ -144,6 +148,7 @@ class PraatHNR(SampleProcessor):
 
 
 class FundamentalFrequency(SampleProcessor):
+    INPUT_SAMPLING_RATE = 16000
     """Computes the f0 array for a sound file"""
 
     def __init__(self, method="shennong", hop_size=5, min_freq=75, max_freq=300):
@@ -163,8 +168,6 @@ class FundamentalFrequency(SampleProcessor):
         self.max_freq = max_freq
 
     def process(self, sample_data: AudioSample) -> np.ndarray:
-        # TODO : check homogeneity of the 3 different methods
-        # converting the hop size to frame numbers
         frames_hopsize = int(self.hop_size / 1000 * sample_data.rate)
         pitch_values = None
         if self.method == "praat":
@@ -216,7 +219,7 @@ class AdvancedFundamentalFrequency(SampleProcessor):
     the Probability of Voicing (pov), the convolution between pitch and pov
     It's fully based on shennong
     """
-
+    INPUT_SAMPLING_RATE = 16000
     def __init__(self, hop_size=5, min_freq=75, max_freq=300):
         """
 
@@ -258,7 +261,7 @@ class MFCCsMeanOfStd(SampleProcessor):
     Computes, for each annotated audio sample, the mean of standard deviations for the 12
     first coefficients of the MFCCs and their deltas
     """
-
+    INPUT_SAMPLING_RATE = 16000
     def __init__(self,
                  window_type='hanning',
                  low_freq=20,
@@ -331,6 +334,7 @@ class MFCCsMeanOfStd(SampleProcessor):
 
 
 class VocalTremorFeatures(SampleProcessor):
+    INPUT_SAMPLING_RATE = 16000
     PRAAT_SCRIPT_PATH = Path(__file__).absolute().parent \
                         / Path("data/tremor2.07/tremor.praat")
 
@@ -375,6 +379,7 @@ class VocalTremorFeatures(SampleProcessor):
 
 
 class AperiodicityFeatures(SampleProcessor):
+    INPUT_SAMPLING_RATE = 16000
     def process(self, sample_data: AudioSample) -> Dict:
         try:
             sound = parselmouth.Sound(sample_data.data,
@@ -413,6 +418,7 @@ class AperiodicityFeatures(SampleProcessor):
 
 
 class RPDE(SampleProcessor):
+    INPUT_SAMPLING_RATE = 22500
     def __init__(self,
                  dim: int,
                  tau: int,
@@ -537,6 +543,7 @@ class DFA(SampleProcessor):
     """Computes the Detrented Fluctuation Analysis. Code stolen from
     https://github.com/dokato/dfa .
     Shouldn't be dependent on the input audio's encoding (int16 or float32)"""
+    INPUT_SAMPLING_RATE = 22500
 
     def __init__(self, scale_boundaries: Tuple[float, float],
                  scale_density: float):
