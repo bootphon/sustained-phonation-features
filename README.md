@@ -1,5 +1,8 @@
 # Sustained Phonation Features
 
+Code to replicate the features from the paper https://arxiv.org/abs/2006.05365
+
+
 ## Installing the environment
 
 To run the experiment's notebook, the creation of a conda environment
@@ -22,3 +25,9 @@ in the interface.
 ```shell script
 jupyter notebook 
 ```
+
+## References
+
+    .. [1] Riad, R, Titeux, H, Lemoine, L., Montillot J. Hamet Bagnou, J. Cao, X., Dupoux, E & Bachoud-Lévi A.-C.
+           *Vocal markers from sustained phonation in Huntington's Disease.*
+           In: INTERSPEECH-2020
