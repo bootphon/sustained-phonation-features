@@ -13,15 +13,12 @@ from shennong.features.postprocessor.delta import DeltaPostProcessor
 from shennong.features.processor.mfcc import MfccProcessor
 from shennong.features.processor.pitch import PitchProcessor, \
     PitchPostProcessor
+from soundsig.sound import BioSound
 
 from .base import SampleProcessor, AudioSample
 
-from soundsig.sound import BioSound
-from soundsig.sound import WavFile
-
 
 class PraatVoiceFeatures(SampleProcessor):
-    
     """Computes the various shimmer/jitter features using the parselmouth
     binding librairy. All the features are accessed through the API's
     `parselmouth.praat.call` function and some very specific parameters"""
@@ -49,6 +46,7 @@ class PraatVoiceFeatures(SampleProcessor):
         "dda": ("Get shimmer (dda)", (0, 0, 0.0001, 0.02, 1.3, 1.6))
     }
     INPUT_SAMPLING_RATE = 16000
+
     def process(self, sample: AudioSample) -> Dict:
         try:
             sound = parselmouth.Sound(sample.data,
@@ -68,13 +66,9 @@ class PraatVoiceFeatures(SampleProcessor):
             return features
 
         except parselmouth.PraatError as e:
-            print("Sample %s, (%i samples): error %s)" %
-                  (sample.name,
-                   len(audio_sample.array), str(e)))
+            print(f"Sample {sample.name}, ({len(sample.data):d} "
+                  f"samples): error {str(e)})")
 
-
-            
-            
 
 class ModulationPowerSpectrumAnalysis(SampleProcessor):
     """
@@ -86,7 +80,7 @@ class ModulationPowerSpectrumAnalysis(SampleProcessor):
     def __init__(self,
                  max_abs_temporal_modulation=200,
                  min_spectral_modulation=0,
-                 max_spectral_modulation=10*10**(-3)):
+                 max_spectral_modulation=10 * 10 ** (-3)):
         """
         """
 
@@ -102,16 +96,15 @@ class ModulationPowerSpectrumAnalysis(SampleProcessor):
             (wt >= -self.max_abs_temporal_modulation)
             & (wt <= self.max_abs_temporal_modulation)]
         temporal_modulations_indexes = (
-            wt >= -self.max_abs_temporal_modulation) & (
-                wt <= self.max_abs_temporal_modulation)
-        frequency_modulations_indexes = (wf >= \
-            self.min_spectral_modulation) & (wf <= self.max_spectral_modulation)
+                                               wt >= -self.max_abs_temporal_modulation) & (
+                                               wt <= self.max_abs_temporal_modulation)
+        frequency_modulations_indexes = ((wf > self.min_spectral_modulation)
+                                         & (wf <= self.max_spectral_modulation))
         mps = mps[frequency_modulations_indexes, :]
         mps = mps[:, temporal_modulations_indexes]
-        mps_powTensor = np.where(mps == 0, np.finfo(float).eps, mps)
         return mps, frequency_modulations_clip, temporal_modulations_clip
 
-    def process(self, sample_data: AudioSample) -> np.ndarray:
+    def process(self, sample_data: AudioSample) -> Dict[str, np.ndarray]:
         maxAmp = np.abs(sample_data.data.astype(float)).max()
         myBioSound = BioSound(
             soundWave=sample_data.data.astype(float) / maxAmp,
@@ -126,12 +119,15 @@ class ModulationPowerSpectrumAnalysis(SampleProcessor):
             max_freq=sample_data.rate / 2)
         myBioSound.mpsCalc(window=0.1, Norm=True)
 
-        filtered_mps, mps_wf,mps_wt = self.filter_mps(mps = myBioSound.mps, wf = myBioSound.wf, wt = myBioSound.wt)
-        return {'mps': filtered_mps, 'mps_wf': mps_wf,'mps_wt': mps_wt}
+        filtered_mps, mps_wf, mps_wt = self.filter_mps(mps=myBioSound.mps,
+                                                       wf=myBioSound.wf,
+                                                       wt=myBioSound.wt)
+        return {'mps': filtered_mps, 'mps_wf': mps_wf, 'mps_wt': mps_wt}
 
-    
+
 class PraatHNR(SampleProcessor):
     INPUT_SAMPLING_RATE = 16000
+
     def process(self, sample: AudioSample) -> List[float]:
         try:
             sound = parselmouth.Sound(sample.data,
@@ -220,6 +216,7 @@ class AdvancedFundamentalFrequency(SampleProcessor):
     It's fully based on shennong
     """
     INPUT_SAMPLING_RATE = 16000
+
     def __init__(self, hop_size=5, min_freq=75, max_freq=300):
         """
 
@@ -262,6 +259,7 @@ class MFCCsMeanOfStd(SampleProcessor):
     first coefficients of the MFCCs and their deltas
     """
     INPUT_SAMPLING_RATE = 16000
+
     def __init__(self,
                  window_type='hanning',
                  low_freq=20,
@@ -291,7 +289,7 @@ class MFCCsMeanOfStd(SampleProcessor):
             'low_freq': self.low_freq,
             'high_freq': self.high_freq,
             'use_energy': self.use_energy,
-            'sample_rate':sample.rate,
+            'sample_rate': sample.rate,
         }
         mfcc_processor = MfccProcessor(**mfcc_options)
         audio_data = Audio(sample.data, sample.rate)
@@ -302,13 +300,13 @@ class MFCCsMeanOfStd(SampleProcessor):
             nmfcc = mfcc_values.shape[1]
             features_dict = {
                 "mfcc":
-                np.mean(np.std(mfcc_values.data, axis=0)),
+                    np.mean(np.std(mfcc_values.data, axis=0)),
                 "delta_mfcc":
-                np.mean(
-                    np.std(delta_values.data[:, nmfcc:2 * nmfcc].data,
-                           axis=0)),
+                    np.mean(
+                        np.std(delta_values.data[:, nmfcc:2 * nmfcc].data,
+                               axis=0)),
                 "delta_delta_mfcc":
-                np.mean(np.std(delta_values.data[:, 2 * nmfcc:].data, axis=0)),
+                    np.mean(np.std(delta_values.data[:, 2 * nmfcc:].data, axis=0)),
             }
             return features_dict
 
@@ -318,11 +316,11 @@ class MFCCsMeanOfStd(SampleProcessor):
             nmfcc = mfcc_values.shape[1]
             features_dict = {
                 "mfcc":
-                np.mean(np.std(mfcc_values.data, axis=0)),
+                    np.mean(np.std(mfcc_values.data, axis=0)),
                 "delta_mfcc":
-                np.mean(
-                    np.std(delta_values.data[:, nmfcc:2 * nmfcc].data,
-                           axis=0)),
+                    np.mean(
+                        np.std(delta_values.data[:, nmfcc:2 * nmfcc].data,
+                               axis=0)),
             }
             return features_dict
 
@@ -373,13 +371,13 @@ class VocalTremorFeatures(SampleProcessor):
             return tremor_features
 
         except parselmouth.PraatError as e:
-            print("Sample %s, (%i samples): error %s)" %
-                  (sample.name,
-                   len(sample.array), str(e)))
+            print(f"Sample {sample.name}, ({len(sample.data):d} samples): "
+                  f"error {str(e)})")
 
 
 class AperiodicityFeatures(SampleProcessor):
     INPUT_SAMPLING_RATE = 16000
+
     def process(self, sample_data: AudioSample) -> Dict:
         try:
             sound = parselmouth.Sound(sample_data.data,
@@ -397,33 +395,32 @@ class AperiodicityFeatures(SampleProcessor):
                     if 'Fraction of locally unvoiced frames' in el:
                         aperiodicity_features[
                             'Fraction of locally unvoiced frames'] = float(
-                                el.split(':')[1].replace("%",
-                                                         "").split('(')[0])
+                            el.split(':')[1].replace("%",
+                                                     "").split('(')[0])
                     if 'Number of voice breaks' in el:
                         aperiodicity_features[
                             'Number of voice breaks'] = float(
-                                el.split(':')[1])
+                            el.split(':')[1])
                     if 'Degree of voice breaks' in el:
                         aperiodicity_features[
                             'Degree of voice breaks'] = float(
-                                el.split(':')[1].replace("%",
-                                                         "").split('(')[0])
+                            el.split(':')[1].replace("%",
+                                                     "").split('(')[0])
             return aperiodicity_features
 
         except parselmouth.PraatError as e:
-            print("Sample %s, (%i samples): error %s)" %
-                  (sample_data.name,
-                   len(sample_data.data), str(e)))
-
+            print(f"Sample {sample_data.name}, ({len(sample_data.data):d} "
+                  f"samples): error {str(e)})")
 
 
 class RPDE(SampleProcessor):
     INPUT_SAMPLING_RATE = 22500
+
     def __init__(self,
                  dim: int,
                  tau: int,
                  epsilon: float,
-                 tmax: Optional[float] = None):
+                 tmax: Optional[int] = None):
         super().__init__()
         self.epsilon, self.tau, self.dim = epsilon, tau, dim
         self.tmax = tmax
@@ -473,7 +470,7 @@ class RPDE(SampleProcessor):
             # finding the first "out of ball" index
             first_out = len(ts)  # security
             for j in np.arange(i + 1, len(ts)):
-                if t_max > 0 and j - i > t_max:
+                if 0 < t_max < j - i:
                     break
                 d = np.linalg.norm(ts[i] - ts[j])
                 if d > epsilon:
@@ -482,7 +479,7 @@ class RPDE(SampleProcessor):
 
             # finding the first "back to the ball" index
             for j in np.arange(first_out + 1, len(ts)):
-                if t_max > 0 and j - i > t_max:
+                if 0 < t_max < j - i:
                     break
                 d = np.linalg.norm(ts[i] - ts[j])
                 if d < epsilon:
@@ -512,7 +509,7 @@ class RPDE(SampleProcessor):
         # converting the sound array to the right format
         # (RPDE expects the array to be floats in [-1,1]
         if sample_data.data.dtype == np.int16:
-            data = (sample_data.data / (2**16)).astype(np.float32)
+            data = (sample_data.data / (2 ** 16)).astype(np.float32)
         else:
             data = sample_data.data.astype(np.float32)
 
@@ -563,7 +560,7 @@ class DFA(SampleProcessor):
             coeff = np.polyfit(scale_ax, xcut, 1)
             xfit = np.polyval(coeff, scale_ax)
             # detrending and computing RMS of each window
-            rms[e] = np.sqrt(np.mean((xcut - xfit)**2))
+            rms[e] = np.sqrt(np.mean((xcut - xfit) ** 2))
         return rms
 
     def process(self, sample_data: AudioSample) -> float:
@@ -572,11 +569,11 @@ class DFA(SampleProcessor):
         y = np.cumsum(data - np.mean(data))
         scale_exponents = np.arange(self.scale_bound[0], self.scale_bound[1],
                                     self.scale_density)
-        scales = (10**scale_exponents).astype(np.int)
+        scales = (10 ** scale_exponents).astype(np.int)
         fluct = np.zeros(len(scales))
         # computing RMS for each window
         for e, sc in enumerate(scales):
-            fluct[e] = np.sqrt(np.mean(self.compute_rms(y, sc)**2))
+            fluct[e] = np.sqrt(np.mean(self.compute_rms(y, sc) ** 2))
         # fitting a line to rms data
         coeff = np.polyfit(np.log10(scales), np.log10(fluct), 1)
         normalized_dfa = 1 / (1 + np.exp(-coeff[0]))
@@ -595,12 +592,13 @@ class TimeSeriesStatistics(SampleProcessor):
             "skewness": skew(sample_data),
             "kurtosis": kurtosis(sample_data)
         }
-    
+
+
 class MPT(SampleProcessor):
     def process(self, sample_data: AudioSample) -> float:
-        return len(sample_data.data)/sample_data.rate
-    
-    
+        return len(sample_data.data) / sample_data.rate
+
+
 class MaximumPhonationUntilVoiceBreak(SampleProcessor):
     @staticmethod
     def compute_NVB(snd):
@@ -632,7 +630,5 @@ class MaximumPhonationUntilVoiceBreak(SampleProcessor):
             return self.compute_MPTVB(sound)
 
         except parselmouth.PraatError as e:
-            print("Sample %s, (%i samples): error %s)" %
-                  (self.current_sample.id,
-                   len(sample_data.data), str(e)))
-
+            print(f"Sample {sample_data.name}, ({len(sample_data.data):d} "
+                  f"samples): error {str(e)})")
