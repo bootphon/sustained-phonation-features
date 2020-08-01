@@ -1,6 +1,6 @@
 # Sustained Phonation Features
 
-Code to replicate the features from the paper https://arxiv.org/abs/2006.05365
+Code to replicate the features from the paper https://arxiv.org/abs/2006.05365 to appear at Interspeech 2020.
 
 
 ## Installing the environment
@@ -31,3 +31,10 @@ jupyter notebook
     .. [1] Riad, R, Titeux, H, Lemoine, L., Montillot J. Hamet Bagnou, J. Cao, X., Dupoux, E & Bachoud-Lévi A.-C.
            *Vocal markers from sustained phonation in Huntington's Disease.*
            In: INTERSPEECH-2020
+
+If you use the Modulation Power Spectrum features, please cite also:
+
+    .. [2] Elie, J. E. and F. E. Theunissen 
+           *Zebra finches identify individuals using vocal signatures unique to each call type.*
+           In: Nature Communications. 2018
+
