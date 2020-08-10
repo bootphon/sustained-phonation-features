@@ -19,7 +19,7 @@ You should be then good to go
 ## Extracting the features
 
 Make sure you have installed and activated the aforementioned conda environment,
-then launch a jupyter notebook, and reach the `Sustained Phonation.ipynb` file
+then launch a jupyter notebook, and reach the `Sustained_Phonation.ipynb` file
 in the interface.
 
 ```shell script
